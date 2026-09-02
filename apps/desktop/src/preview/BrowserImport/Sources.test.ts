@@ -719,6 +719,41 @@ describe("listSourceProfiles Firefox fallback", () => {
     );
   }
 
+  it.effect("scans for profiles when profiles.ini declares only ones without cookies", () =>
+    run(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-firefox-stale-ini-",
+        });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, { HOME: home }),
+          Effect.provideService(HostProcessPlatform, "darwin"),
+        );
+        const root = firefox.userDataDirectory(context)!;
+        // `profiles.ini` names a profile that was never launched (no cookie
+        // database), while the real cookies sit in an undeclared one.
+        yield* fileSystem.makeDirectory(path.join(root, "Profiles", "stale.default"), {
+          recursive: true,
+        });
+        const realDirectory = path.join(root, "Profiles", "real.default");
+        yield* fileSystem.makeDirectory(realDirectory, { recursive: true });
+        yield* writeFirefoxCookieDatabase(path.join(realDirectory, "cookies.sqlite"), 3, 0);
+        yield* fileSystem.writeFileString(
+          path.join(root, "profiles.ini"),
+          ["[Profile0]", "Name=Stale", "IsRelative=1", "Path=Profiles/stale.default"].join("\n"),
+        );
+
+        // Returning the empty declared list would hide the browser entirely.
+        assert.deepEqual(yield* listSourceProfiles(firefox, context), [
+          { directory: "Profiles/real.default", name: "real.default", cookieCount: 3 },
+        ]);
+        assert.isTrue(yield* isSourceInstalled(firefox, context));
+      }),
+    ),
+  );
+
   it.effect("counts only importable cookies for declared and fallback profiles", () =>
     run(
       Effect.gen(function* () {
